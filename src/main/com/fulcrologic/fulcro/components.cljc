@@ -27,6 +27,16 @@
      (let [config (some-> cljs-env/*compiler* deref (get-in [:options :external-config :fulcro]))]
        config)))
 
+(def ^{:private true
+       :dynamic true} *after-render*
+  "MOVED. This var will NOT work. You must use the one in raw.components instead."
+  nil)
+
+(def ^{:private true
+       :dynamic true} *query-state*
+  "MOVED. This var will NOT work. You must use the one in raw.components instead."
+  nil)
+
 ;; Bound during Fulcro-driven renders to communicate critical information to components *on their initial render*.
 ;; Due to the nature of js and React there is no guarantee that future `render` (or lifecycle calls) will actually be done synchronously,
 ;; so these are *copied* into the raw react props of the component for future reference (a mounted component won't change
@@ -44,20 +54,6 @@
 ;; Also used when you force a root render.
 (def ^:dynamic *blindly-render* false)
 
-(defn ^:deprecated use-effect
-  "DEPRECATED: use from com.fulcrologic.fulcro.react.hooks
-
-  A simple wrapper around React/useEffect that auto-converts cljs arrays of deps to js."
-  ([f] #?(:cljs (js/React.useEffect f)))
-  ;; TODO: optimization: if this were a macro we could convert literal vectors at compile time. See DOM macros.
-  ([f deps] #?(:cljs (js/React.useEffect f (clj->js deps)))))
-
-(defn ^:deprecated use-state
-  "DEPRECATED: use from com.fulcrologic.fulcro.react.hooks
-  A simple wrapper around React/useState. Returns a cljs vector for easy destructuring"
-  [initial-value]
-  #?(:cljs (js->clj (js/React.useState initial-value))))
-
 (def isoget-in
   "Like get-in, but for js objects, and in CLJC. In clj, it is just get-in. In cljs it is
   gobj/getValueByKeys."
@@ -67,7 +63,6 @@
   "Like get, but for js objects, and in CLJC. In clj, it is just `get`. In cljs it is
   `gobj/get`."
   rc/isoget)
-
 
 (def register-component!
   "
@@ -441,7 +436,8 @@
                                                         (when-not app
                                                           (log/error "Cannot create proper fulcro component, as *app* isn't bound."
                                                             "This happens when something renders a Fulcro component outside of Fulcro's render context."
-                                                            "See `with-parent-context`."))
+                                                            "See `with-parent-context`."
+                                                            "See https://book.fulcrologic.com/#err-comp-app-not-bound"))
                                                         (let [depth                (or *depth* (isoget js-props :fulcro$depth))
                                                               set-tunnelled-props! (fn [updater] (let [new-props (updater nil)] (js-set-tunnelled-props! new-props)))]
                                                           #js {:setState           set-tunnelled-props!
@@ -730,20 +726,20 @@
                 ;; dev time warnings/errors
                 (when goog.DEBUG
                   (when (nil? *app*)
-                    (log/error "A Fulcro component was rendered outside of a parent context. This probably means you are using a library that has you pass rendering code to it as a lambda. Use `with-parent-context` to fix this."))
+                    (log/error "A Fulcro component was rendered outside of a parent context. This probably means you are using a library that has you pass rendering code to it as a lambda. Use `with-parent-context` to fix this. See https://book.fulcrologic.com/#err-comp-rendered-outside-parent-ctx"))
                   (when (or (map? key) (vector? key))
-                    (log/warn "React key for " (component-name class) " is not a simple scalar value. This could cause spurious component remounts."))
+                    (log/warn "React key for " (component-name class) " is not a simple scalar value. This could cause spurious component remounts. See https://book.fulcrologic.com/#warn-react-key-not-simple-scalar"))
 
                   (when (string? ref)
-                    (log/warn "String ref on " (component-name class) " should be a function."))
+                    (log/warn "String ref on " (component-name class) " should be a function. See https://book.fulcrologic.com/#warn-string-ref-not-function"))
 
                   (when (or (nil? props) (not (gobj/containsKey props "fulcro$value")))
-                    (log/error "Props middleware seems to have the corrupted props for " (component-name class)))
+                    (log/error "Props middleware seems to have corrupted props for " (component-name class) "See https://book.fulcrologic.com/#err-comp-props-middleware-corrupts"))
 
                   (when-not ((fnil map? {}) (gobj/get props "fulcro$value"))
                     (log/error "Props passed to" (component-name class) "are of the type"
-                      (type (gobj/get props "fulcro$value"))
-                      "instead of a map. Perhaps you meant to `map` the component over the props?")))))
+                      (type->str (type (gobj/get props "fulcro$value")))
+                      "instead of a map. Perhaps you meant to `map` the component over the props? See https://book.fulcrologic.com/#err-comp-props-not-a-map")))))
            (create-element class props children)))
        {:class     class
         :queryid   qid
@@ -756,19 +752,14 @@
   ([class] (computed-factory class {}))
   ([class options]
    (let [real-factory (factory class options)]
-     (fn
-       ([props] (real-factory props))
-       ([props computed-props]
-        (real-factory (computed props computed-props)))
-       ([props computed-props & children]
-        (apply real-factory (computed props computed-props) children))))))
-
-(def ^:dynamic *after-render*
-  "Dynamic var that affects the activation of transactions run via `transact!`. Defaults to false. When set to true
-   this option prevents a transaction from running until after the next render is complete. This typically should not be set
-   to true in scenarios where you are unsure if a render will occur, since that could make the transaction appear to
-   \"hang\"."
-  false)
+     (with-meta
+       (fn
+         ([props] (real-factory props))
+         ([props computed-props]
+          (real-factory (computed props computed-props)))
+         ([props computed-props & children]
+          (apply real-factory (computed props computed-props) children)))
+       (meta real-factory)))))
 
 (defn transact!
   "Submit a transaction for processing.
@@ -799,7 +790,7 @@
   when calling `transact!` from *within* another mutation to ensure that the effects of the current mutation finish
   before this transaction takes control of the CPU. This option defaults to `false`, but `defmutation` causes it to
   be set to true for any transactions run within mutation action sections. You can affect the default for this value
-  in a dynamic scope by binding `*after-render*` to true
+  in a dynamic scope by binding `rc/*after-render*` to true
 
   NOTE: This function calls the application's `tx!` function (which is configurable). Fulcro 2 'follow-on reads' are
   supported by the default version and are added to the `:refresh` entries. Your choice of rendering algorithm will
@@ -1431,7 +1422,7 @@
       NOTE: shouldComponentUpdate should generally not be overridden other than to force it false so
       that other libraries can control the sub-dom. If you do want to implement it, then old props can
       be obtained from (prim/props this), and old state via (gobj/get (. this -state) \"fulcro$state\").
-      
+
       ; React Hooks support
       ;; if true, creates a function-based instead of a class-based component, see the Developer's Guide for details
       :use-hooks? true
@@ -1474,7 +1465,7 @@
               query    (get-query component state-map)
               ui-props (computed (fdn/db->tree query (get-in state-map ident) state-map) prior-computed)]
           (tunnel-props! component ui-props))))
-    (log/error "Cannot re-render a non-component")))
+    (log/error "Cannot re-render a non-component. See https://book.fulcrologic.com/#err-comp-cannot-rerender-non-comp")))
 
 (defn get-parent
   "Returns the nth parent of `this` (a React element). The optional `n` can be 0 (the immediate parent) or any positive

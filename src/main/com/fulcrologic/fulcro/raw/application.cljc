@@ -108,11 +108,11 @@
            :com.fulcrologic.fulcro.application/only-refresh #{}
            :com.fulcrologic.fulcro.application/to-refresh #{})))
      (let [batch-notifications (ah/app-algorithm app :batch-notifications)
-           notify-all!   #(doseq [render-listener (-> runtime-atom deref :com.fulcrologic.fulcro.application/render-listeners vals)]
-                            (try
-                              (render-listener app options)
-                              (catch #?(:clj Exception :cljs :default) e
-                                (log/error e "Render listener failed."))))]
+           notify-all!         #(doseq [render-listener (-> runtime-atom deref :com.fulcrologic.fulcro.application/render-listeners vals)]
+                                  (try
+                                    (render-listener app options)
+                                    (catch #?(:clj Exception :cljs :default) e
+                                      (log/error e "Render listener failed. See https://book.fulcrologic.com/#err-render-listener-failed"))))]
        (if batch-notifications
          (batch-notifications notify-all!)
          (notify-all!))))))
@@ -385,12 +385,12 @@
   [app root-key component {:keys [keep-existing? initial-params initialize?]
                            :or   {initial-params {}}}]
   (when (and initialize?
-             (not (and keep-existing? (contains? (current-state app) root-key))))
+          (not (and keep-existing? (contains? (current-state app) root-key))))
     (swap! (:com.fulcrologic.fulcro.application/state-atom app)
-           (fn use-root-merge* [s]
-             (merge/merge-component s component
-                                    (comp/get-initial-state component initial-params)
-                                    :replace [root-key])))))
+      (fn use-root-merge* [s]
+        (merge/merge-component s component
+          (comp/get-initial-state component initial-params)
+          :replace [root-key])))))
 
 (defn add-root!
   "Use a root key and component as a subtree managed by Fulcro. This establishes props updates to non-React UI,
@@ -401,7 +401,14 @@
 
    The `component` should be a real Fulcro component or a generated normalizing component from `nc` (or similar).
 
-   Calls `receive-props` with the props (not including `root-key`) that satisfy the query of `component`.
+   The options map can contain:
+
+   * `:initialize?` - Pass true if you want the initial state of component to be merged into app state.
+   * `:keep-existing?` - Only valid if `initialize?` is true. When true, indicates initialize should only
+                         be done if there isn't already state at the component's ident in the database.
+   * `:initial-params` - The parameters to pass to the component's `get-initial-state` when initializing.
+   * `:receive-props` - REQUIRED: The function to call when the props change in the Fulcro state. This is a
+                        `(fn [props] )` where the props will be the component props (sans the root-key).
 
    NOTE: This function tracks prior props and is capable of a very fast staleness check. It will not call your callback
    unless it detects an actual change to the data of interest to your UI.
@@ -419,23 +426,25 @@
                                              (receive-props props)))))))
 
 (defn remove-root!
-  "Remove a root key managed subtree from Fulcro"
+  "Remove a root key managed subtree from Fulcro. Does not garbage collect, just stops updating the callback."
   [app root-key]
   (remove-render-listener! app root-key))
 
 (defn maybe-merge-new-component!
   "Helper for `add-component!` and similar. Populates the component state depending on `initialize?` and `keep-existing?`.
 
+   `app` - The app
+   `component` - A component (e.g. from `nc`)
+   `component-data` - A tree of data that matches the shape of the component's query.
    `initialize?` is true by default.
-
-   `:keep-existing?` - A boolean. If true, then the state of the component will not be initialized if there
+   `:keep-existing?` - A boolean (default false). If true, then the state of the component will not be initialized if there
    is already data at the component's ident (which will be computed using the initial entity provided).
   "
   [app component component-data {:keys [keep-existing? initialize?]
                                  :or   {initialize? true}}]
   (when (and initialize?
-             (not (and keep-existing?
-                       (comp/has-active-state? (current-state app) (comp/get-ident component component-data)))))
+          (not (and keep-existing?
+                 (comp/has-active-state? (current-state app) (comp/get-ident component component-data)))))
     (swap! (:com.fulcrologic.fulcro.application/state-atom app) merge/merge-component component component-data)))
 
 (defn add-component!
@@ -445,23 +454,30 @@
    The `component` should be a real Fulcro component or a generated normalizing component from `nc` (or similar) that
    has initial state. .
 
-   Calls `receive-props` with the props (not including `root-key`) that satisfy the query of `component`.
+   The options map can contain:
+
+   * `:initialize?` - Pass true if you want the initial state of component to be merged into app state.
+   * `:keep-existing?` - Only valid if `initialize?` is true. When true, indicates initialize should only
+                         be done if there isn't already state at the component's ident in the database.
+   * `:initial-params` - The parameters to pass to the component's `get-initial-state` when initializing.
+   * `:receive-props` - REQUIRED: The function to call when the props change in the Fulcro state. This is a
+                        `(fn [props] )` where the props will be the component props.
   "
   [app component {:keys [receive-props initialize? keep-existing? initial-params] :as options}]
   (let [initial-entity (comp/get-initial-state component initial-params)
         ident          (or (:ident options) (comp/get-ident component initial-entity))
         prior-props    (atom nil)
-        get-props      #(comp/get-traced-props (current-state app) component {:ident ident :prior-props @prior-props})]
+        get-props      #(comp/get-traced-props (current-state app) component ident @prior-props)]
     (maybe-merge-new-component! app component initial-entity options)
-      (receive-props (get-props))
-      (add-render-listener! app ident (fn [app _]
-                                        (let [props (get-props)]
-                                          (when-not (identical? @prior-props props)
-                                            (reset! prior-props props)
+    (receive-props (get-props))
+    (add-render-listener! app ident (fn [app _]
+                                      (let [props (get-props)]
+                                        (when-not (identical? @prior-props props)
+                                          (reset! prior-props props)
                                           (receive-props props)))))))
 
 (defn remove-component!
-  "Remove a root key managed subtree from Fulcro"
+  "Remove a root key managed subtree from Fulcro. Does not GC the state, just stops sending props updates on render."
   [app component]
   (let [initial-entity (comp/get-initial-state component {})
         ident          (comp/get-ident component initial-entity)]

@@ -133,7 +133,7 @@
           {:keys [synchronous?]} tx-options
           event-data (dissoc event-data ::transact-options)]
       (when (nil? event-id)
-        (log/error "Invalid (nil) event ID"))
+        (log/error "Invalid (nil) event ID. See https://book.fulcrologic.com/#err-uism-invalid-eventid"))
       (trigger-state-machine-event! env params)
       (rapp/schedule-render! app (or transact-options {})))
     true))
@@ -213,7 +213,7 @@
                (into [::state-map ::asm-id asm-id] ks)
                [::state-map ::asm-id asm-id ks])]
     (when (not (get-in state-map [::asm-id asm-id]))
-      (log/warn (ex-info "" {}) "Attempt to get an ASM path" ks "for a state machine that is not in Fulcro state. ASM ID: " asm-id))
+      (log/warn (ex-info "" {}) "Attempt to get an ASM path" ks "for a state machine that is not in Fulcro state. ASM ID: " asm-id "See https://book.fulcrologic.com/#warn-uism-sm-not-in-state"))
     path))
 
 (>defn asm-value
@@ -237,7 +237,7 @@
       (log/debug "Activating state " state-id "on" (asm-id env))
       (assoc-in env (asm-path env ::active-state) state-id))
     (do
-      (log/error "Activate called for invalid state: " state-id "on" (asm-id env))
+      (log/error "Activate called for invalid state: " state-id "on" (asm-id env) "See https://book.fulcrologic.com/#err-uism-activate-invalid-state")
       env)))
 
 (>defn store
@@ -312,7 +312,7 @@
   (if-let [real-path (resolve-alias env alias)]
     (get-in state-map real-path)
     (do
-      (log/error "Unable to find alias in state machine:" alias)
+      (log/error "Unable to find alias in state machine:" alias "See https://book.fulcrologic.com/#err-uism-unknown-alias")
       nil)))
 
 (>defn set-aliased-value
@@ -560,7 +560,7 @@
   (let [actor-ident (actor->ident env actor-name)
         cls         (or component-class (actor-class env actor-name))]
     (if (nil? cls)
-      (log/error "Cannot run load. Counld not derive Fulcro class (and none was configured) for " actor-name)
+      (log/error "Cannot run load. Counld not derive Fulcro class (and none was configured) for " actor-name "See https://book.fulcrologic.com/#err-uism-load-cant-find-fulcro-class")
       (df/load! app actor-ident cls load-options))
     nil))
 
@@ -569,7 +569,7 @@
   [app query-key component-class load-options]
   [::fulcro-app ::query-key (s/nilable rc/component-class?) ::load-options => any?]
   (if (nil? query-key)
-    (log/error "Cannot run load. query-key cannot be nil.")
+    (log/error "Cannot run load. query-key cannot be nil. See https://book.fulcrologic.com/#err-uism-load-nil-query-key")
     (df/load! app query-key component-class load-options))
   nil)
 
@@ -581,7 +581,7 @@
                                                                ::event-id error-event}
                                                         error-data (assoc ::event-data error-data)))])
       (do
-        (log/warn "A fallback occurred, but no event was defined by the client. Sending generic ::uism/load-error event.")
+        (log/warn "A fallback occurred, but no event was defined by the client. Sending generic ::uism/load-error event. See https://book.fulcrologic.com/#warn-uism-fallback-missing-event")
         (rc/transact! app [(trigger-state-machine-event (cond-> {::asm-id   asm-id
                                                                  ::event-id ::load-error}))])))
     nil))
@@ -682,7 +682,7 @@
     (if handler
       handler
       (let [{::keys [event-id]} env]
-        (log/warn "UNEXPECTED EVENT: Did not find a way to handle event" event-id "in the current active state:" current-state)
+        (log/warn "UNEXPECTED EVENT: Did not find a way to handle event" event-id "in the current active state:" current-state "See https://book.fulcrologic.com/#warn-uism-unexpected-event")
         identity))))
 
 (>defn ui-refresh-list
@@ -727,7 +727,7 @@
       (fn [env timer-id]
         (let [cancel-predicate (some-> (get-in active-timers [timer-id ::cancel-on]) meta :cancel-on)]
           (when-not cancel-predicate
-            (log/error "INTERNAL ERROR: Cancel predicate was nil for timer " timer-id))
+            (log/error "INTERNAL ERROR: Cancel predicate was nil for timer " timer-id "See https://book.fulcrologic.com/#err-uism-cancel-pred-nil"))
           (if (and cancel-predicate (cancel-predicate event-id))
             (do
               (log/debug "Cancelling timer " timer-id "on" (asm-id env) "due to event" event-id)
@@ -763,7 +763,7 @@
   [::mutation-env ::trigger-descriptor => ::refresh-vector]
   (log/debug "Trigger" asm-id event-id)
   (when-not (get-in @state [::asm-id asm-id])
-    (log/error "Attempted to trigger event " event-id "on state machine" asm-id ", but that state machine has not been started (call begin! first)."))
+    (log/error "Attempted to trigger event " event-id "on state machine" asm-id ", but that state machine has not been started (call begin! first). See https://book.fulcrologic.com/#err-uism-trigger-not-started-machine"))
   (let [sm-env       (state-machine-env @state ref asm-id event-id event-data app)
         handler      (active-state-handler sm-env)
         valued-env   (apply-event-value sm-env params)
@@ -771,7 +771,7 @@
                        (binding [rc/*after-render* true]
                          (handler (assoc valued-env ::fulcro-app app)))
                        (catch #?(:clj Exception :cljs :default) e
-                         (log/error e "Handler for event" event-id "threw an exception for ASM ID" asm-id)
+                         (log/error e "Handler for event" event-id "threw an exception for ASM ID" asm-id "See https://book.fulcrologic.com/#err-uism-evt-handler-exc")
                          nil))
         final-env    (as-> (or handled-env valued-env) e
                        (clear-timeouts-on-event! e event-id)
@@ -864,7 +864,7 @@
 
               (eql/ident? v) [actor-id v]
               :otherwise (do
-                           (log/error "The value given for actor" actor-id "had (or was) an invalid ident:" v)
+                           (log/error "The value given for actor" actor-id "had (or was) an invalid ident:" v "See https://book.fulcrologic.com/#err-uism-actor-invalid-ident")
                            nil))))
     actors))
 
@@ -1136,10 +1136,10 @@
   "Get the name of the active state for an active state machine using a component. If you use this to represent UI changes then you should
   include the ident of your state machine instance in the query of the component that uses it so that `shouldComponentUpdate` will
   see props change:
-  
+
   ```
   (defsc Component [this props]
-    {:query (fn [] [ [::uism/asm-id ::my-machine] ...]) 
+    {:query (fn [] [ [::uism/asm-id ::my-machine] ...])
      ...}
     ...
     (let [s (get-active-state this ::my-machine)] ...))
@@ -1156,6 +1156,15 @@
 (defn add-uism!
   "Add a UISM to Fulcro in a manner disconnected from React.
 
+   The options map should contain:
+
+   * `:state-machine-definition` - The state machine you want to create/use.
+   * `:id` - The ID you want to use for the instance of the state machine.
+   * `:receive-props` - A `(fn [props])` that is called whenever the state changes in a way that affects an actor. The
+                        `props` is a map that contains the actor props (by actor name `{:actor/x actor-x-props}`) and the current
+                        state of the state machine as `:active-state`.
+   * `:initial-event-data` - The data to pass to the initial event if the machine is started (not remounted).
+
    This will set up the given state machine under the given ID, and start it (if not
    already started). Your initial state handler MUST set up actors and otherwise initialize based on initial-event-data.
 
@@ -1165,20 +1174,22 @@
    because UISM requires component appear in the component registry (components cannot be safely stored in app state, just their
    names).
 
-   Calls `receive-props` with a map that contains the actor props (by actor name) and the current state of the state machine as `:active-state`.
 
    NOTE: This function automatically supports a very fast variant of props change detection, so you will not receive
    calls when there is a transaction that does not change the actors/active state of this UISM."
   [app {:keys [state-machine-definition id receive-props initial-event-data]}]
-  (let [last-return-value (atom {})]
+  (let [last-return-value (atom {})
+        last-ident        (atom {})]
     (rapp/add-render-listener! app id
       (fn [& args]
         (let [state-map (rapp/current-state app)
               {::keys [active-state actor->ident actor->component-name]} (get-in state-map [::asm-id id])
               props     (reduce-kv
                           (fn [result actor ident]
-                            (let [prior-props (get @last-return-value actor)]
-                              (if (fdn/possibly-stale? state-map prior-props)
+                            (let [prior-ident (get @last-ident actor)
+                                  prior-props (get @last-return-value actor)]
+                              (swap! last-ident assoc actor ident)
+                              (if (or (not= prior-ident ident) (fdn/possibly-stale? state-map prior-props))
                                 (let [cname (actor->component-name actor)
                                       cls   (rc/registry-key->class cname)
                                       query (rc/get-query cls)]
@@ -1198,7 +1209,8 @@
       (begin! app state-machine-definition id initial-event-data))))
 
 (defn remove-uism!
-  "Remove a previously-added UISM from state and the render listener."
+  "Remove a previously-added UISM from state and the render listener. The state machine will not receive any
+   (final) events."
   [app id]
   (rapp/remove-render-listener! app id)
   (swap! (:com.fulcrologic.fulcro.application/state-atom app) update ::asm-id dissoc id))

@@ -266,15 +266,14 @@
    (if-let [m (props x)]
      (ident x m)
      (when #?(:clj false :cljs goog.DEBUG)
-       (log/warn "get-ident was invoked on " (component-name x) " with nil props (this could mean it wasn't yet mounted): " x))))
+       (log/warn "get-ident was invoked on " (component-name x) " with nil props (this could mean it wasn't yet mounted): " x "See https://book.fulcrologic.com/#warn-get-ident-with-nil-props"))))
   ([class props]
    (if-let [id (ident class props)]
      (do
        (when (and #?(:clj false :cljs goog.DEBUG) (not (eql/ident? id)))
-         (log/warn "get-ident returned an invalid ident:" id (:displayName (component-options class))))
-       (if (= :com.fulcrologic.fulcro.algorithms.merge/not-found (second id)) [(first id) nil] id))
+       (if (= :com.fulcrologic.fulcro.algorithms.merge/not-found (second id)) [(first id) nil] id)))
      (when #?(:clj false :cljs goog.DEBUG)
-       (log/warn "get-ident called with something that is either not a class or does not implement ident: " class)
+       (log/warn "get-ident called with something that is either not a class or does not implement ident: " class "See https://book.fulcrologic.com/#warn-get-ident-invalid-class")
        nil))))
 
 (defn is-factory?
@@ -288,7 +287,7 @@
   [class qualifier]
   (if (nil? class)
     (when #?(:clj false :cljs goog.DEBUG)
-      (log/error "Query ID received no class (if you see this warning, it probably means metadata was lost on your query)" (ex-info "" {})))
+      (log/error "Query ID received no class (if you see this warning, it probably means metadata was lost on your query) See https://book.fulcrologic.com/#err-comp-query-id-no-class" (ex-info "" {})))
     (when-let [classname (component-name class)]
       (str classname (when qualifier (str "$" qualifier))))))
 
@@ -471,7 +470,7 @@
             :else state))
         (catch #?(:clj Exception :cljs :default) e
           (when #?(:clj false :cljs goog.DEBUG)
-            (log/error e "Query normalization failed. Perhaps you tried to set a query with a syntax error?")))))
+            (log/error e "Query normalization failed. Perhaps you tried to set a query with a syntax error? See https://book.fulcrologic.com/#err-comp-q-norm-failed")))))
     state-map query))
 
 (defn link-query
@@ -527,7 +526,7 @@
         (contains? args :query) (setq*))
       (do
         (when #?(:clj false :cljs goog.DEBUG)
-          (log/error "Set query failed. There was no query ID. Use a class or factory for the second argument."))
+          (log/error "Set query failed. There was no query ID. Use a class or factory for the second argument. See https://book.fulcrologic.com/#err-comp-set-q-failed"))
         state-map))))
 
 (defn set-query!
@@ -552,7 +551,7 @@
         (util/dev-check-query (get-query class-or-factory @state-atom) component-name)
         (when schedule-render! (schedule-render! app {:force-root? true})))
       (when #?(:clj false :cljs goog.DEBUG)
-        (log/error "Unable to set query. Invalid arguments.")))))
+        (log/error "Unable to set query. Invalid arguments. See https://book.fulcrologic.com/#err-comp-unable-set-q")))))
 
 (letfn [(--set-query! [app class-or-factory {:keys [query] :as params}]
           (let [state-atom (:com.fulcrologic.fulcro.application/state-atom app)
@@ -563,7 +562,7 @@
             (if (and (string? queryid) (or query params))
               (swap! state-atom set-query* class-or-factory {:queryid queryid :query query :params params})
               (when #?(:clj false :cljs goog.DEBUG)
-                (log/error "Unable to set query. Invalid arguments.")))))]
+                (log/error "Unable to set query. Invalid arguments. See https://book.fulcrologic.com/#err-comp-unable-set-q")))))]
   (defn refresh-dynamic-queries!
     "Refresh the current dynamic queries in app state to reflect any updates to the static queries of the components.
 
@@ -626,8 +625,8 @@
                   (not (has-initial-app-state? c))
                   (not= "com.fulcrologic.fulcro.algorithms.form-state/FormConfig" (component-name c)))
             (log/warn "Component" (component-name c) "has a constant ident (id in the ident is not nil for empty props),"
-              "but it has no initial state. This could cause this component's props to"
-              "appear as nil unless you have a mutation or load that connects it to the graph after application startup."))
+                      "but it has no initial state. This could cause this component's props to"
+          "appear as nil unless you have a mutation or load that connects it to the graph after application startup. See https://book.fulcrologic.com/#warn-constant-ident-no-initial-state"))
           (when (has-initial-app-state? c)
             (let [initial-keys (set (keys (get-initial-state c {})))
                   join-map     (into {}
@@ -641,8 +640,8 @@
                         :let [target (get join-map k)]]
                   (when (has-initial-app-state? target)
                     (log/warn "Component" (component-name c) "does not INCLUDE initial state for" (component-name target)
-                      "at join key" k "; however, " (component-name target) "HAS initial state. This probably means your initial state graph is incomplete"
-                      "and props on" (component-name target) "will be nil.")))))))))))
+                              "at join key" k "; however, " (component-name target) "HAS initial state. This probably means your initial state graph is incomplete"
+                      "and props on" (component-name target) "will be nil. See https://book.fulcrologic.com/#warn-initial-state-incomplete")))))))))))
 
 (defn id-key
   "Returns the keyword of the most likely ID attribute in the given props (the first one with the `name` \"id\").
@@ -696,7 +695,7 @@
 
 (defn nc
   "Create an anonymous normalizing query component. By default the normalization will be auto-detected based on there being a prop at each
-   entity level that has (any) namespace, but with the name `id`. For example:
+   entity level that has (any) namespace, and a name of `id`. For example:
 
    ```
    [:list/id :list/name {:list/items [:item/id :item/complete? :item/label]}]
@@ -741,7 +740,7 @@
    necessary to do I/O on that tree.
 
    This kind of component will *not* be registered in the component registry unless you pass a :componentName
-   via the top-component-options (such a component cannot be used with things that
+   via the top-level-options. A registry entry is necessary for things that
    require the registry, such as dynamic queries and UI state machines).
    "
   ([entity-data-tree]
@@ -798,16 +797,20 @@
        (get-subquery-component* component ast-nodes query-path)))))
 
 (defn get-traced-props
-  "Uses `fdn/traced-db->tree` to get the props of the component at `ident`. If `prior-props` are not stale,
-   those are returned instead."
-  [state-map component {:keys [ident prior-props]}]
+  "Uses `fdn/traced-db->tree` to get the props of the component at `ident`, and leverages those optimizations to return
+   `prior-props` if they are not stale.
+
+   A subsequent call (e.g. on next render frame) of this function with the prior return value (as `prior-props`)
+   thus gives you an efficient non-react replacement for `shouldComponentUpdate`, etc.
+   "
+  [state-map component ident prior-props]
   (let [query (get-query component state-map)]
     (if (fdn/possibly-stale? state-map prior-props)
       (fdn/traced-db->tree state-map ident query)
       prior-props)))
 
 (defn has-active-state?
-  "Returns true if there is already data at a component's ident"
+  "Returns true if there is already data at a component's `ident`"
   [state-map ident]
   (let [current-value (get-in state-map ident)]
     (and (map? current-value) (seq current-value))))

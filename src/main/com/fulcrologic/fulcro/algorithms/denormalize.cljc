@@ -106,7 +106,7 @@
     (cond
       stop-recursion? (do
                         (when (and #?(:clj true :cljs goog.DEBUG) (not depth-based?))
-                          (log/warn "Loop detected in data graph at " entity ". Recursive query stopped."))
+                          (log/warn "Loop detected in data graph at " entity ". Recursive query stopped. See https://book.fulcrologic.com/#warn-denormalize-loop-detected"))
                         n)
       to-many? (assoc! n key
                  (into []
@@ -270,7 +270,7 @@
    that were traversed to originally build prior-props.
 
    This is not proof that the props have changed, but the false indicators will all be `true`, meaning it is a safe (and
-   faster) replacement for the comparisions that `shouldComponentUpdate` usually use.
+   faster) replacement for the comparisons that `shouldComponentUpdate` usually use.
    "
   [current-state-map prior-props]
   (let [{::keys [visited source-state-map]} (meta prior-props)]

@@ -223,7 +223,7 @@
       `(def ~name (->Mutation '~target-symbol)))))
 
 (defmethod mutate :default [{:keys [ast]}]
-  (log/error "Unknown app state mutation. Have you required the file with your mutations?" (:key ast)))
+  (log/error "Unknown app state mutation. Have you required the file with your mutations?" (:key ast) "See https://book.fulcrologic.com/#err-mut-unknown-mutation"))
 
 (defn toggle!
   "Toggle the given boolean `field` on the specified component. It is recommended you use this function only on
@@ -331,11 +331,14 @@
   `env` - The env of the mutation
   `class` - A component class that represents the return type.  You may supply a fully-qualified symbol instead of the
   actual class, and this method will look up the class for you (useful to avoid circular references).
+  `opts` (optional):
+   - `query-params` - Optional parameters to add to the generated query
 
   Returns an update `env`, and is a valid return value from mutation remote sections."
   ([env class]
    (returning env class nil))
-  ([env class query-params]
+  ([env class {:keys [query-params]
+               :as   opts}]
    (let [class (if (or (keyword? class) (symbol? class))
                  (rc/registry-key->class class)
                  class)]
@@ -511,7 +514,7 @@
   "
   [params]
   (action [{:keys [state ref]}]
-    (when (nil? ref) (log/error "ui/set-props requires component to have an ident."))
+    (when (nil? ref) (log/error "m/set-props requires component to have an ident. See https://book.fulcrologic.com/#err-mut-set-props-missing-ident"))
     (swap! state update-in ref (fn [st] (merge st params)))))
 
 (defmutation toggle
@@ -519,7 +522,7 @@
    Use for local UI data only. Use your own mutations for things that have a good abstract meaning. "
   [{:keys [field]}]
   (action [{:keys [state ref]}]
-    (when (nil? ref) (log/error "ui/toggle requires component to have an ident."))
+    (when (nil? ref) (log/error "m/toggle requires component to have an ident. See https://book.fulcrologic.com/#err-mut-toggle-missing-ident"))
     (swap! state update-in (conj ref field) not)))
 
 

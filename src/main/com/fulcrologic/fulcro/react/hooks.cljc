@@ -1,6 +1,9 @@
 (ns com.fulcrologic.fulcro.react.hooks
-  "Simple wrappers for React hooks support, along with additional predefined functions that do useful things
-   with hooks in the context of Fulcro."
+  "React hooks wrappers and helpers. The wrappers are simple API simplifications that help when using hooks from
+   Clojurescript, but this namespace also includes utilities for using Fulcro's data/network management from raw React
+   via hooks.
+
+   See `use-root`, `use-component`, and `use-uism`."
   #?(:cljs
      (:require-macros [com.fulcrologic.fulcro.react.hooks :refer [use-effect use-lifecycle]]))
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -12,7 +15,7 @@
         [[goog.object :as gobj]
          cljsjs.react])
     [com.fulcrologic.fulcro.components :as comp]
-   [com.fulcrologic.fulcro.raw.components :as rc]
+    [com.fulcrologic.fulcro.raw.components :as rc]
     [com.fulcrologic.fulcro.raw.application :as rapp]
     [com.fulcrologic.fulcro.algorithms.denormalize :as fdn]
     [com.fulcrologic.fulcro.algorithms.merge :as merge]
@@ -132,7 +135,7 @@
 
 #?(:clj
    (defmacro use-lifecycle
-     "A macro shorthand that evaulates to low-level js at compile time for
+     "A macro shorthand that evaluates to low-level js at compile time for
      `(use-effect (fn [] (when setup (setup)) (when teardown teardown)) [])`"
      ([setup] `(use-lifecycle ~setup nil))
      ([setup teardown]
@@ -175,6 +178,9 @@
                               #?(:clj [componentName nil] :cljs #js [componentName nil])))]
   (defn use-fulcro-mount
     "
+    NOTE: In many cases you are better off using the other hooks support in this ns, such as `use-component`, since
+    they do not have a render integration requirement.
+
     Generate a new sub-root that is controlled and rendered by Fulcro's multi-root-renderer.
 
     ```
@@ -245,86 +251,92 @@
       (fn [] (rapp/remove-render-listener! app id)))))
 
 #?(:cljs
-(defn use-component
-  "Use Fulcro from raw React. This is a Hook effect/state combo that will connect you to the transaction/network/data
-  processing of Fulcro, but will not rely on Fulcro's render. Thus, you can embed the use of the returned props in any
-  stock React context. Technically, you do not have to use Fulcro components for rendering, but they are necessary to define the
-  query/ident/initial-state for startup and normalization.
+   (defn use-component
+     "Use Fulcro from raw React. This is a Hook effect/state combo that will connect you to the transaction/network/data
+     processing of Fulcro, but will not rely on Fulcro's render. Thus, you can embed the use of the returned props in any
+     stock React context. Technically, you do not have to use Fulcro components for rendering, but they are necessary to define the
+     query/ident/initial-state for startup and normalization. You may also use this within normal (Fulcro)
+     components to generate dynamic components on-the-fly (see `nc`).
 
-  The arguments are:
+     The arguments are:
 
-  app - A Fulcro app
-  component - A component with query/ident. Queries MUST have co-located normalization info. You
-              can create this with normal `defsc` or as an anonymous component via `raw.components/nc`.
-  options - A map of options, containing:
+     `app` - A Fulcro app
+     `component` - A component with query/ident. Queries MUST have co-located normalization info. You
+                 can create this with normal `defsc` or as an anonymous component via `raw.components/nc`.
+     `options` - A map of options, containing:
+       * `:initial-params` - The parameters to use when getting the initial state of the component. See `comp/get-initial-state`.
+         If no initial state exists on the top-level component, then an empty map will be used. This will mean your props will be
+         empty to start.
+       * `initialize?` - A boolean (default true). If true then the initial state of the component will be used to pre-populate the component's state
+         in the app database.
+       * `:keep-existing?` - A boolean. If true, then the state of the component will not be initialized if there
+         is already data at the component's ident (which will be computed using the initial state params provided, if
+         necessary).
+       * `:ident` - Only needed if you are NOT initializing state, AND the component has a dynamic ident.
 
-      * :initial-params - The parameters to use when getting the initial state of the component. See `comp/get-initial-state`.
-    If no initial state exists on the top-level component, then an empty map will be used. This will mean your props will be
-    empty to start.
-  * initialize? - A boolean (default true). If true then the initial state of the component will be used to pre-populate the component's state
-    in the app database.
-  * :keep-existing? - A boolean. If true, then the state of the component will not be initialized if there
-    is already data at the component's ident (which will be computed using the initial state params provided, if
-    necessary).
-  * :ident - Only needed if you are NOT initializing state, AND the component has a dynamic ident.
+     Returns the props from the Fulcro database. The component using this function will automatically refresh after Fulcro
+     transactions run (Fulcro is not a watched-atom system. Updates happen at transaction boundaries).
 
-  Returns the props from the Fulcro database. The component using this function will automatically refresh after Fulcro
-      transactions run (Fulcro is not a watched-atom system. Updates happen at transaction boundaries). MAY return nil if no data is at that component's ident.
-  "
-  [app component
+     MAY return nil if no data is at that component's ident.
+
+     See also `use-root`.
+     "
+     [app component
       {:keys [initialize? initial-params keep-existing?]
        :or   {initial-params {}}
        :as   options}]
      (let [prior-props-ref (use-ref nil)
            get-props       (fn [ident] (rc/get-traced-props (rapp/current-state app) component
-                                                            {:ident       ident
-                                                             :prior-props (.-current prior-props-ref)}))
+                                         ident
+                                         (.-current prior-props-ref)))
            [current-props
-            set-props!]    (use-state
-                            (fn initialize-component-state []
-                              (let [initial-entity (comp/get-initial-state component initial-params)
-                                    initial-ident  (or (:ident options) (rc/get-ident component initial-entity))]
-                                (rapp/maybe-merge-new-component! app component initial-entity options)
-                                (let [initial-props (get-props initial-ident)]
-                                  (set! (.-current prior-props-ref) initial-props)
-                                  initial-props))))
+            set-props!] (use-state
+                          (fn initialize-component-state []
+                            (let [initial-entity (comp/get-initial-state component initial-params)
+                                  initial-ident  (or (:ident options) (rc/get-ident component initial-entity))]
+                              (rapp/maybe-merge-new-component! app component initial-entity options)
+                              (let [initial-props (get-props initial-ident)]
+                                (set! (.-current prior-props-ref) initial-props)
+                                initial-props))))
            current-ident   (or (:ident options) (rc/get-ident component current-props))]
        (use-effect
-        (fn [] (let [listener-id (random-uuid)]
-                 (rapp/add-render-listener! app listener-id
-                                            (fn [app _]
-                                              (let [props (get-props current-ident)]
-                                                (when-not (identical? (.-current prior-props-ref) props)
-                                                  (set! (.-current prior-props-ref) props)
-                                                  (set-props! props)))))
-                 (fn use-tree-remove-render-listener* [] (rapp/remove-render-listener! app listener-id))))
-        [(hash current-ident)])
+         (fn [] (let [listener-id (random-uuid)]
+                  (rapp/add-render-listener! app listener-id
+                    (fn [app _]
+                      (let [props (get-props current-ident)]
+                        (when-not (identical? (.-current prior-props-ref) props)
+                          (set! (.-current prior-props-ref) props)
+                          (set-props! props)))))
+                  (fn use-tree-remove-render-listener* [] (rapp/remove-render-listener! app listener-id))))
+         [(hash current-ident)])
        current-props)))
 
 (defn use-root
-  "Use a root key and component as a subtree managed by Fulcro. The `root-key` must be a unique
+  "Use a root key and component as a subtree managed by Fulcro from raw React. The `root-key` must be a unique
    (namespace recommended) key among all keys used within the application, since the root of the database is where it
    will live.
 
    The `component` should be a real Fulcro component or a generated normalizing component from `nc` (or similar).
 
    Returns the props (not including `root-key`) that satisfy the query of `component`. MAY return nil if no data is available.
+
+   See also `use-component`.
   "
   [app root-key component {:keys [initialize? keep-existing? initial-params] :as options}]
-  (let [prior-props-ref            (use-ref nil)
-        get-props                  #(rapp/get-root-subtree-props app root-key component (.-current prior-props-ref))
+  (let [prior-props-ref (use-ref nil)
+        get-props       #(rapp/get-root-subtree-props app root-key component (.-current prior-props-ref))
         [current-props set-props!] (use-state (fn []
                                                 (rapp/maybe-merge-new-root! app root-key component options)
                                                 (let [initial-props (get-props)]
                                                   (set! (.-current prior-props-ref) initial-props)
                                                   initial-props)))]
     (use-lifecycle
-     (fn [] (rapp/add-render-listener! app root-key (fn use-root-render-listener* [app _]
-                                                      (let [props (get-props)]
-                                                        (when-not (identical? (.-current prior-props-ref) props)
-                                                          (log/info "props updated" root-key)
-                                                          (set! (.-current prior-props-ref) props)
-                                                          (set-props! props))))))
+      (fn [] (rapp/add-render-listener! app root-key (fn use-root-render-listener* [app _]
+                                                       (let [props (get-props)]
+                                                         (when-not (identical? (.-current prior-props-ref) props)
+                                                           (log/info "props updated" root-key)
+                                                           (set! (.-current prior-props-ref) props)
+                                                           (set-props! props))))))
       (fn use-tree-remove-render-listener* [] (rapp/remove-root! app root-key)))
     (get current-props root-key)))
 
@@ -333,8 +345,6 @@
    already started). Your initial state handler MUST set up actors and otherwise initialize based on initial-event-data.
 
    If the machine is already started at the given ID then this effect will send it an `:event/remounted` event.
-   This hook will send an `:event/unmounted` when the component using this effect goes away. In both cases you may choose
-   to ignore the event.
 
    You MUST include `:componentName` in each of your actor's normalizing component options (e.g. `(nc query {:componentName ::uniqueName})`)
    because UISM requires component appear in the component registry (components cannot be safely stored in app state, just their
